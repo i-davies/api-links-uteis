@@ -4,14 +4,14 @@ name: CI/CD Pipeline
 # Executa a cada Push e Pull request na main
 on:
   push:
-    branches: ["main"] # Executa sempre que houver um push na branch 'main'
+    branches: ["teste"] # Executa sempre que houver um push na branch 'main'
     paths-ignore:
       - 'README.md'       # Ignora mudanças apenas no README
       - 'docs/**'         # Ignora qualquer arquivo dentro da pasta 'docs'
       - 'LICENSE'         # Ignora o arquivo de licença
       - 'CONTRIBUTING.md' # Ignora o guia de contribuição
   pull_request:
-    branches: ["main"] # Executa sempre que um Pull Request for aberto para a branch 'main'
+    branches: ["teste"] # Executa sempre que um Pull Request for aberto para a branch 'main'
     paths-ignore:
       - 'README.md'       # Ignora mudanças apenas no README
       - 'docs/**'         # Ignora qualquer arquivo dentro da pasta 'docs'
