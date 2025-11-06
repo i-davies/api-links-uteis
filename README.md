@@ -363,166 +363,213 @@ Agora que os testes estão automatizados, vamos adicionar o Job de CD para empac
 </details>
 
 <details>
-<summary><strong>Parte 7: Containerização com Docker e Deploy no Render.com</strong></summary>
+<summary><strong>Parte 7: Containerização com Docker e Deploy Automático</strong></summary>
 
-Nesta etapa, você aprenderá a criar uma imagem Docker da sua aplicação e realizar o deploy em um ambiente de produção usando o Render.com.
+Vamos agora containerizar nossa aplicação usando Docker e automatizar o deploy. Isso permitirá que a aplicação seja executada em qualquer ambiente de forma consistente.
 
-### O que é Docker?
+### 7.1 - Entendendo o Dockerfile
 
-Docker permite empacotar sua aplicação com todas as suas dependências em um **container**, garantindo que ela funcione da mesma forma em qualquer ambiente (desenvolvimento, teste ou produção).
-
-### 7.1 - Preparação: Criando Conta no Docker Hub
-
-Antes de começar, você precisará de uma conta no Docker Hub para armazenar suas imagens.
-
-**Etapas:**
-
-1.  Acesse [hub.docker.com](https://hub.docker.com) e crie sua conta gratuita.
-2.  Instale o **Docker Desktop** no seu computador ([docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop)).
-3.  Abra o Docker Desktop e faça login com suas credenciais.
-
-> **⚠️ Importante:** O Docker Desktop precisa estar em execução durante todo o processo, pois ele gerencia a ponte entre o Windows e o ambiente de containers.
-
-### 7.2 - Criando o Dockerfile
-
-O **Dockerfile** é um arquivo de instruções que define como construir a imagem da sua aplicação.
-
-**Etapas:**
-
-1.  Na raiz do projeto, crie um arquivo chamado `Dockerfile` (sem extensão).
-
-2.  Adicione o seguinte conteúdo ao arquivo:
+O projeto já possui um `Dockerfile` na raiz. Vamos entender como ele funciona:
 
 ```dockerfile
-  # Usa imagem Maven para compilar o projeto
-  FROM maven:3.9.9-eclipse-temurin-21 AS build
+# Usa imagem Maven para compilar o projeto
+FROM maven:3.9.9-eclipse-temurin-21 AS build
 
-  # Define pasta de trabalho dentro do container
-  WORKDIR /app
+# Define pasta de trabalho dentro do container
+WORKDIR /app
 
-  # Copia todo o código para dentro do container
-  COPY . .
+# Copia todo o código para dentro do container
+COPY . .
 
-  # Compila e gera o JAR (pula testes para acelerar)
-  RUN mvn clean package -DskipTests
+# Compila e gera o JAR (pula testes para acelerar)
+RUN mvn clean package -DskipTests
 
-  # === STAGE 2: RUNTIME ===
-  # Nova etapa, usa apenas o Java Runtime (mais leve que Maven)
-  FROM eclipse-temurin:21-jre
+# === STAGE 2: RUNTIME ===
+# Nova etapa, usa apenas o Java Runtime (mais leve que Maven)
+FROM eclipse-temurin:21-jre
 
-  # Define pasta de trabalho
-  WORKDIR /app
+# Define pasta de trabalho
+WORKDIR /app
 
-  # Copia o JAR gerado na etapa anterior
-  COPY --from=build /app/target/*.jar app.jar
+# Copia o JAR gerado na etapa anterior
+COPY --from=build /app/target/*.jar app.jar
 
-  # Informa que a aplicação usa a porta 8080
-  EXPOSE 8080
+# Informa que a aplicação usa a porta 8080
+EXPOSE 8080
 
-  # Comando para rodar a aplicação
-  ENTRYPOINT ["java", "-jar", "app.jar"]
+# Comando para rodar a aplicação
+ENTRYPOINT ["java", "-jar", "app.jar"]
 ```
 
-**Entendendo o Dockerfile:**
+**O que é Multi-Stage Build?**
 
-  - `FROM`: Define a imagem base a ser utilizada.
-  - `WORKDIR`: Define o diretório de trabalho dentro do container.
-  - `COPY`: Copia arquivos do seu computador para o container.
-  - `RUN`: Executa comandos durante a construção da imagem.
-  - `EXPOSE`: Informa qual porta a aplicação utiliza.
-  - `ENTRYPOINT`: Define o comando que será executado ao iniciar o container.
+  - **Stage 1 (build)**: Usa Maven para compilar o projeto e gerar o `.jar`
+  - **Stage 2 (runtime)**: Copia apenas o `.jar` para uma imagem mais leve com Java Runtime
+  - **Vantagem**: A imagem final é muito menor, pois não inclui o Maven e dependências de build
 
-### 7.3 - Construindo e Testando a Imagem Localmente
+### 7.2 - Configurando o GitHub Actions para Docker
 
-Agora vamos criar a imagem Docker e testá-la em sua máquina.
+O projeto já possui o arquivo `.github/workflows/docker-deploy.yml` configurado. Vamos entender como funciona:
+
+```yaml
+# Nome do workflow que aparece no GitHub
+name: Docker Build & Deploy
+
+# Quando executar este workflow
+on:
+    push:
+        branches: ["main"]  # Executa quando houver push na branch main
+    workflow_dispatch:      # Permite executar manualmente pelo GitHub
+
+# Lista de trabalhos (jobs)
+jobs:
+  # Job 1: Executar testes
+  test:
+    runs-on: ubuntu-latest
+    # Usa container Maven para rodar os testes
+    container:
+        image: maven:3.9.9-eclipse-temurin-21
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Executa testes unitários e de integração
+      - name: Executar testes no container
+        run: mvn -B verify
+
+  # Job 2: Build da imagem Docker e Deploy
+  build-and-deploy:
+    # Só executa se os testes passarem
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # Faz login no Docker Hub usando secrets configurados
+      - name: Login no Docker Hub
+        uses: docker/login-action@v3
+        with: 
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Constrói a imagem Docker e envia para o Docker Hub
+      - name: Build e Push para Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/api-links-uteis:latest
+
+      # Aciona o webhook do Render para fazer deploy automático
+      - name: Deploy no Render
+        run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
+```
+
+**Entendendo o fluxo:**
+
+1.  **test**: Executa todos os testes dentro de um container Maven
+2.  **build-and-deploy**: Só roda se os testes passarem
+      * Faz login no Docker Hub
+      * Constrói a imagem Docker usando o Dockerfile
+      * Envia a imagem para o Docker Hub
+      * Notifica o Render para fazer deploy da nova versão
+
+### 7.3 - Configuração Passo a Passo
 
 **Etapas:**
 
-1.  Abra o terminal na raiz do projeto (pode usar o terminal integrado do VS Code).
+1.  **Criar conta no Docker Hub**
 
-2.  **Construa a imagem Docker:**
+      * Acesse [Docker Hub](https://hub.docker.com)
+      * Clique em **"Sign Up"** e crie sua conta
+      * Confirme seu e-mail
+
+2.  **Criar Access Token no Docker Hub**
+
+      * Faça login no Docker Hub
+      * Clique no seu usuário (canto superior direito) → **Account Settings**
+      * Vá em **Security** → **New Access Token**
+      * Preencha:
+          * **Description**: `github-actions-api-links`
+          * **Access permissions**: **Read, Write, Delete**
+      * Clique em **Generate**
+      * **⚠️ COPIE O TOKEN** (você só verá uma vez\!)
+
+3.  **Configurar Secrets no GitHub**
+
+      * Vá para seu repositório no GitHub
+      * Clique em **Settings** → **Secrets and variables** → **Actions**
+      * Clique em **"New repository secret"** e adicione **3 secrets**:
+          * **DOCKER\_USERNAME**
+              * **Name**: `DOCKER_USERNAME`
+              * **Secret**: Seu username do Docker Hub (ex: `seunome`)
+          * **DOCKER\_PASSWORD**
+              * **Name**: `DOCKER_PASSWORD`
+              * **Secret**: Cole o token gerado no passo 2
+          * **RENDER\_DEPLOY\_HOOK** (configurar após criar serviço no Render)
+              * **Name**: `RENDER_DEPLOY_HOOK`
+              * **Secret**: URL do webhook do Render (veremos no passo 4)
+
+4.  **Configurar Deploy no Render**
+
+      * Acesse [Render](https://render.com) e faça login (pode usar GitHub)
+      * Clique em **"New +"** → **"Web Service"**
+      * Escolha **"Deploy an existing image from a registry"**
+      * Configure:
+          * **Image URL**: `docker.io/SEU-USERNAME/api-links-uteis:latest`
+          * **Name**: `api-links-uteis`
+          * **Region**: escolha a mais próxima (ex: Oregon/Ohio)
+          * **Instance Type**: **Free** (para testes)
+      * Em **Environment Variables**, adicione (se necessário):
+          * `JAVA_OPTS`: `-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0`
+      * Clique em **"Create Web Service"**
+
+5.  **Obter Deploy Hook do Render**
+
+      * No dashboard do Render, vá no seu serviço criado
+      * Clique em **Settings**
+      * Role até **Deploy Hook**
+      * Copie a URL do webhook
+      * Adicione no GitHub Secrets como `RENDER_DEPLOY_HOOK` (conforme passo 3)
+
+6.  **Testar o Pipeline Completo**
+
+      * Faça uma mudança no código (ex: alterar mensagem em `HelloController`)
+      * Commit e push para a branch `main`:
+
+    <!-- end list -->
 
     ```powershell
-    docker build -t api-links-uteis:latest .
+    git add .
+    git commit -m "test: trigger docker pipeline"
+    git push origin main
     ```
 
-      * `-t api-links-uteis:latest`: Define o nome e a tag da imagem.
-      * `.`: Indica que o Dockerfile está no diretório atual.
+      * Vá para **Actions** no GitHub
+      * Acompanhe o workflow **"Docker Build & Deploy"**
+      * Após conclusão:
+          * Verifique a imagem no Docker Hub
+          * Aguarde alguns minutos e acesse sua aplicação no Render
 
-3.  **Execute o container localmente:**
+### 7.4 - Como funciona o pipeline?
 
-    ```powershell
-    docker run -d -p 8080:8080 --name api-links-uteis api-links-uteis:latest
-    ```
+```
+Push na main
+    ↓
+Job 1: Test (executar testes com Maven)
+    ↓
+Job 2: Build and Deploy
+    ├─ Build da imagem Docker
+    ├─ Push para Docker Hub
+    └─ Trigger deploy no Render
+    ↓
+Render baixa nova imagem e faz deploy
+```
 
-      * `-d`: Executa o container em segundo plano (detached).
-      * `-p 8080:8080`: Mapeia a porta 8080 do container para a porta 8080 do seu computador.
-      * `--name api-links-uteis`: Define um nome para o container.
+**O que cada job faz?**
 
-4.  **Teste a aplicação:** Acesse `http://localhost:8080/api/links` no navegador. 
-
-5.  **Verifique o container no Docker Desktop:** Abra o Docker Desktop e veja seu container em execução.
-
-### 7.4 - Publicando a Imagem no Docker Hub
-
-Para realizar o deploy no Render.com, precisamos publicar a imagem em um registro público.
-
-**Etapas:**
-
-1.  **Faça login no Docker Hub via terminal:**
-
-    ```powershell
-    docker login
-    ```
-
-      * Digite seu **username** e **password** quando solicitado.
-
-2.  **Crie uma tag com seu username do Docker Hub:**
-
-    > **⚠️ Atenção:** Substitua `SEU-USERNAME` pelo seu nome de usuário do Docker Hub.
-
-    ```powershell
-    docker tag api-links-uteis:latest SEU-USERNAME/api-links-uteis:latest
-    ```
-
-3.  **Envie a imagem para o Docker Hub:**
-
-    ```powershell
-    docker push SEU-USERNAME/api-links-uteis:latest
-    ```
-
-4.  **Verifique no Docker Hub:** Acesse [hub.docker.com](https://hub.docker.com) e confirme que seu repositório `api-links-uteis` foi criado com sucesso.
-
-### 7.5 - Deploy no Render.com
-
-O Render.com é uma plataforma de hospedagem que permite fazer deploy de aplicações de forma simples e gratuita.
-
-**Etapas:**
-
-1.  Acesse [render.com](https://render.com) e faça login (pode usar sua conta do GitHub).
-
-2.  No painel principal, clique em **"New +"** e selecione **"Web Service"**.
-
-3.  Escolha a opção **"Deploy an existing image from a registry"**.
-
-4.  Configure o serviço com as seguintes informações:
-
-      * **Image URL**: `docker.io/SEU-USERNAME/api-links-uteis:latest`
-        
-        > Substitua `SEU-USERNAME` pelo seu nome de usuário do Docker Hub.
-
-      * **Name**: `api-links-uteis` (ou outro nome de sua preferência)
-      * **Region**: Escolha a região mais próxima (ex: `Oregon (US West)` ou `Ohio (US East)`)
-      * **Instance Type**: Selecione **Free** (para testes e aprendizado)
-
-5.  Clique em **"Create Web Service"** para iniciar o deploy.
-
-6.  Aguarde alguns minutos enquanto o Render.com faz o deploy da sua aplicação.
-
-7.  Após a conclusão, você receberá uma **URL pública** no formato: `https://api-links-uteis.onrender.com`
-
-8.  **Teste sua aplicação online:** Acesse `https://SUA-URL.onrender.com/api/links` para verificar se está funcionando corretamente.
-
-**✅ Parabéns!** Sua aplicação Java está agora rodando em produção, acessível publicamente pela internet!
+  - **test**: Garante que o código está funcionando antes de criar a imagem
+  - **build-and-deploy**: Cria a imagem Docker, envia para o Docker Hub e notifica o Render para fazer o deploy
 
 </details>
