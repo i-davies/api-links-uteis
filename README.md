@@ -573,3 +573,169 @@ Render baixa nova imagem e faz deploy
   - **build-and-deploy**: Cria a imagem Docker, envia para o Docker Hub e notifica o Render para fazer o deploy
 
 </details>
+
+<details>
+<summary><strong>Parte 8: Métricas com Actuator, Prometheus e Grafana</strong></summary>
+
+Nesta parte vamos configurar e visualizar métricas da aplicação usando Spring Boot Actuator, Prometheus e Grafana.
+
+### 8.1 - Adicionar dependências no `pom.xml`
+
+Adicione as dependências abaixo dentro de `<dependencies>`:
+
+```xml
+<!-- Actuator - Métricas e Health Checks -->
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-actuator</artifactId>
+</dependency>
+
+<!-- Micrometer Prometheus - Expor métricas -->
+<dependency>
+    <groupId>io.micrometer</groupId>
+    <artifactId>micrometer-registry-prometheus</artifactId>
+</dependency>
+```
+
+### 8.2 - Configurar `application.properties`
+
+Abra `src/main/resources/application.properties` e adicione:
+
+```properties
+# === ACTUATOR - Métricas e Monitoramento ===
+# Expor endpoints de métricas (health, prometheus, info)
+management.endpoints.web.exposure.include=health,prometheus,info,metrics
+
+# Mostrar detalhes do health check
+management.endpoint.health.show-details=always
+
+# Habilitar métricas HTTP detalhadas
+management.metrics.distribution.percentiles-histogram.http.server.requests=true
+```
+
+### 8.3 - Criar arquivos de infraestrutura
+
+Crie os arquivos na raiz do projeto:
+
+`docker-compose.yml`
+```yaml
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    networks:
+      - monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - monitoring
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - monitoring
+networks:
+  monitoring:
+    driver: bridge
+volumes:
+  prometheus-data:
+  grafana-data:
+```
+
+`prometheus.yml`
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: 'spring-boot-app'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['app:8080']
+```
+
+### 8.4 - Executar e verificar
+
+1. Compilar o projeto
+
+```powershell
+./mvnw.cmd clean package -DskipTests
+```
+
+2. Subir os containers
+
+```powershell
+docker-compose up -d
+```
+
+3. Verificar status
+
+```powershell
+docker-compose ps
+```
+
+Serviços expostos:
+
+- Aplicação: http://localhost:8080
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000
+
+Testar endpoints do Actuator:
+
+- Health Check: http://localhost:8080/actuator/health
+- Métricas gerais: http://localhost:8080/actuator/metrics
+- Métricas Prometheus: http://localhost:8080/actuator/prometheus
+- Info: http://localhost:8080/actuator/info
+
+### 8.5 - Acessar Prometheus e configurar Grafana
+
+Prometheus:
+
+1. Acesse http://localhost:9090
+2. Menu Status → Targets → confirme que está UP
+3. Teste queries: `http_server_requests_seconds_count`, `jvm_memory_used_bytes`
+
+Grafana:
+
+1. Acesse http://localhost:3000 (login inicial admin / admin)
+2. Connections → Data Sources → Add → Prometheus → URL `http://prometheus:9090` → Save & Test
+3. Dashboards → Import → ID 4701 (Spring Boot) ou 11378 (JVM Micrometer) → Import
+
+### 8.6 - Métricas principais disponíveis
+
+HTTP
+
+- `http_server_requests_seconds_count` (total de requests)
+- `http_server_requests_seconds_sum` (tempo total)
+- `http_server_requests_seconds_max` (request mais lenta)
+
+JVM
+
+- `jvm_memory_used_bytes`
+- `jvm_memory_max_bytes`
+- `jvm_threads_live`
+- `jvm_gc_pause_seconds`
+
+Sistema
+
+- `system_cpu_usage`
+- `process_cpu_usage`
+- `system_load_average_1m`
+
+</details>
