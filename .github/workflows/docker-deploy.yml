@@ -1,35 +1,52 @@
+# Nome do workflow que aparece no GitHub
 name: Docker Build & Deploy
 
+# Quando executar: a cada push
 on:
     push:
         branches: ["main"]
-    workflow_dispatch: 
+    workflow_dispatch: # Permite execução manual no github actions
 
+# Lista de trabalhos (jobs) a executar
 jobs:
+  # Job 1: CI - Testes e validação utilizando container
   test:
+    # Sistema operacional para executar
     runs-on: ubuntu-latest
+    # Imagem docker pré configurada com java 21 temurin + maven
     container:
         image: maven:3.9.9-eclipse-temurin-21
+    # Lista de passos (steps) do job
     steps:
+      # Passo 1: Baixar o código do repositório
       - name: Checkout código
         uses: actions/checkout@v4
 
+      # Passo 2: Executar testes
       - name: Executar testes no container
         run: mvn -B verify
 
+  # Job 2: CD - Deploy e artefatos
   build-and-deploy:
+    # Só executa se CI passou
     needs: test
+    # Sistema operacional para executar
     runs-on: ubuntu-latest
+    # Lista de passos (steps) do job
     steps:
+      # Passo 1: Baixar o código do repositório
       - name: Checkout código
         uses: actions/checkout@v4
 
+      # Passo 2: Login no Docker Hub utilizando secrets
+      # configurados no github
       - name: Login no Docker Hub
         uses: docker/login-action@v3
         with: 
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # Passo 3: Action para buildar e enviar imagem docker para o Docker HUB
       - name: Build e Push para Docker Hub
         uses: docker/build-push-action@v5
         with:
@@ -37,5 +54,6 @@ jobs:
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/api-links-uteis:latest
 
+      # Passo 4: Acionar deploy automático no Render.com via webhook
       - name: Deploy no Render
         run: curl -X POST ${{ secrets.RENDER_DEPLOY_HOOK }}
